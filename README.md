@@ -74,7 +74,7 @@ A pickup experience designed around *your* schedule, not the restaurant's.
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/swiggy-ai-craving-identifier.git
+git clone https://github.com/amgaikwad4588/swiggy-ai-craving-identifier.git
 cd swiggy-ai-craving-identifier
 
 # Install dependencies
