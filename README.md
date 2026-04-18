@@ -8,7 +8,7 @@
 
 [![Watch the Demo](https://img.shields.io/badge/Watch_Demo-FF4500?style=for-the-badge&logo=youtube&logoColor=white)](https://your-demo-link-here.com)
 
-[![Deployed here ](https://img.shields.io/badge/Watch_Demo-FF4500?style=for-the-badge&logo=youtube&logoColor=blue)]([![Watch the Demo](https://img.shields.io/badge/Watch_Demo-FF4500?style=for-the-badge&logo=youtube&logoColor=white)](https://your-demo-link-here.com))
+[![View Live Project](https://img.shields.io/badge/View_Live_Project-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://your-deployed-link.vercel.app)
 
 ---
 
