@@ -3,18 +3,17 @@
 > **A concept demo pitching two next-generation features for Swiggy's platform — an AI-powered Food Advisor that identifies what you're craving before you know it yourself, and a "Ready on Arrival" Pickup mode that syncs your travel with food prep in real time.**
 
 ---
-
 ## Demo Video And Deployment
 
 <p align="center">
-  <a href="https://your-demo-link-here.com">
-    <img src="https://img.shields.io/badge/Watch Demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white" />
+  <a href="https://youtube.com/shorts/dxfYgse9StI?feature=share">
+    <img src="https://img.shields.io/badge/Watch%20Demo-1E90FF?style=for-the-badge&logo=youtube&logoColor=white&labelColor=000000" />
   </a>
-  <a href="https://your-deployed-link.vercel.app">
-    <img src="https://img.shields.io/badge/Deployed Here-000000?style=for-the-badge&logo=vercel&logoColor=white" />
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://swiggy-ai-craving-identifier-j41x.vercel.app/">
+    <img src="https://img.shields.io/badge/Live%20Deployment-1E90FF?style=for-the-badge&logo=vercel&logoColor=white&labelColor=000000" />
   </a>
 </p>
-
 ---
 
 ## The Problem This Solves
