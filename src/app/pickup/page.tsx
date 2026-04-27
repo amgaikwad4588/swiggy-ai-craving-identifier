@@ -18,7 +18,7 @@ interface MenuItem {
 }
 
 interface Restaurant {
-  id: number;
+  id: string;
   name: string;
   rating: number;
   cuisines: string;
@@ -40,72 +40,8 @@ const travelModes = [
   { id: "car", label: "Car/Auto", icon: <FaCar />, speed: "5 min" },
 ];
 
-const restaurants: Restaurant[] = [
-  {
-    id: 1,
-    name: "Meghana Foods",
-    rating: 4.5,
-    cuisines: "Biryani, North Indian",
-    distance: "1.2 km",
-    prepTime: 15,
-    emoji: "🍛",
-    bgColor: "bg-amber-500",
-    menu: [
-      { name: "Chicken Biryani", price: 249, emoji: "🍛", tag: "Bestseller" },
-      { name: "Paneer Butter Masala", price: 199, emoji: "🧈" },
-      { name: "Chicken 65", price: 179, emoji: "🍗", tag: "Spicy" },
-      { name: "Gulab Jamun (2pc)", price: 59, emoji: "🍮" },
-    ],
-  },
-  {
-    id: 2,
-    name: "Burger King",
-    rating: 4.2,
-    cuisines: "Burgers, American",
-    distance: "0.8 km",
-    prepTime: 10,
-    emoji: "🍔",
-    bgColor: "bg-orange-500",
-    menu: [
-      { name: "Whopper", price: 179, emoji: "🍔", tag: "Bestseller" },
-      { name: "Chicken Royale", price: 149, emoji: "🍗" },
-      { name: "Veg Crispy Burger", price: 99, emoji: "🥬" },
-      { name: "Fries (Large)", price: 99, emoji: "🍟" },
-    ],
-  },
-  {
-    id: 3,
-    name: "Domino's Pizza",
-    rating: 4.0,
-    cuisines: "Pizza, Italian",
-    distance: "1.5 km",
-    prepTime: 20,
-    emoji: "🍕",
-    bgColor: "bg-red-500",
-    menu: [
-      { name: "Margherita", price: 199, emoji: "🍕" },
-      { name: "Farmhouse", price: 349, emoji: "🍕", tag: "Bestseller" },
-      { name: "Peppy Paneer", price: 299, emoji: "🧀" },
-      { name: "Garlic Bread", price: 99, emoji: "🥖" },
-    ],
-  },
-  {
-    id: 4,
-    name: "Chai Point",
-    rating: 4.3,
-    cuisines: "Beverages, Snacks",
-    distance: "0.5 km",
-    prepTime: 5,
-    emoji: "☕",
-    bgColor: "bg-green-600",
-    menu: [
-      { name: "Masala Chai", price: 49, emoji: "☕", tag: "Bestseller" },
-      { name: "Samosa (2pc)", price: 39, emoji: "🥟" },
-      { name: "Vada Pav", price: 49, emoji: "🍔" },
-      { name: "Cold Coffee", price: 89, emoji: "🥤" },
-    ],
-  },
-];
+// Restaurants are fetched live from /api/pickup/restaurants (Swiggy Food MCP).
+// Menu items are fetched lazily from /api/pickup/menu when a restaurant is picked.
 
 // --- Steps ---
 type Step = "intro" | "location" | "restaurants" | "menu" | "tracking";
@@ -117,6 +53,67 @@ export default function PickupPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [trackingProgress, setTrackingProgress] = useState(0);
   const [foodProgress, setFoodProgress] = useState(0);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [restaurantsLoading, setRestaurantsLoading] = useState(false);
+  const [restaurantsError, setRestaurantsError] = useState<string | null>(null);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [mcpSource, setMcpSource] = useState<"live" | "mock">("mock");
+
+  // Fetch restaurants when the user transitions to the restaurants step.
+  useEffect(() => {
+    if (step !== "restaurants") return;
+    if (restaurants.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      setRestaurantsLoading(true);
+      setRestaurantsError(null);
+      try {
+        const res = await fetch("/api/pickup/restaurants", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          restaurants: Array<{
+            id: string;
+            name: string;
+            cuisines: string[];
+            rating: number;
+            prepTimeMin: number;
+            distanceKm: number;
+            emoji: string;
+            bgColor: string;
+          }>;
+          source: "live" | "mock";
+        };
+        if (cancelled) return;
+        setRestaurants(
+          json.restaurants.map((r) => ({
+            id: r.id,
+            name: r.name,
+            cuisines: r.cuisines.join(", "),
+            rating: r.rating,
+            prepTime: r.prepTimeMin,
+            distance: `${r.distanceKm.toFixed(1)} km`,
+            emoji: r.emoji,
+            bgColor: r.bgColor,
+            menu: [],
+          })),
+        );
+        setMcpSource(json.source);
+      } catch (err) {
+        if (!cancelled) {
+          setRestaurantsError(err instanceof Error ? err.message : "fetch failed");
+        }
+      } finally {
+        if (!cancelled) setRestaurantsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, restaurants.length]);
 
   const addToCart = (item: MenuItem) => {
     setCart((prev) => {
@@ -140,6 +137,43 @@ export default function PickupPage() {
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+
+  // Fetch the selected restaurant's menu lazily, on click.
+  useEffect(() => {
+    if (!selectedRestaurant) return;
+    if (selectedRestaurant.menu.length > 0) return;
+    const restaurantId = selectedRestaurant.id;
+    let cancelled = false;
+    (async () => {
+      setMenuLoading(true);
+      try {
+        const res = await fetch("/api/pickup/menu", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ restaurantId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          items: Array<{ name: string; price: number; emoji: string; tags: string[] }>;
+        };
+        if (cancelled) return;
+        const items: MenuItem[] = (json.items || []).map((i) => ({
+          name: i.name,
+          price: Math.round(i.price),
+          emoji: i.emoji,
+          tag: i.tags?.[0],
+        }));
+        setSelectedRestaurant((prev) => (prev && prev.id === restaurantId ? { ...prev, menu: items } : prev));
+      } catch {
+        // Leave menu empty — UI shows empty state below
+      } finally {
+        if (!cancelled) setMenuLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRestaurant]);
 
   // Simulate tracking progress
   useEffect(() => {
@@ -304,8 +338,17 @@ export default function PickupPage() {
       {/* STEP 3: Restaurant Selection */}
       {step === "restaurants" && (
         <div className="px-4 pt-6 animate-fadeIn">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-1 gap-2">
             <h2 className="text-lg font-bold text-swiggy-dark">Restaurants on your route</h2>
+            <span
+              className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                mcpSource === "live"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-gray-100 text-swiggy-gray"
+              }`}
+            >
+              {mcpSource === "live" ? "🟢 Live · Swiggy MCP" : "⚪ Demo data"}
+            </span>
           </div>
           <div className="flex items-center gap-1 mb-6">
             <MdDirectionsBike className="text-swiggy-orange text-sm" />
@@ -313,6 +356,34 @@ export default function PickupPage() {
               Your ETA: ~{etaMinutes} min by {selectedTravelMode?.label.toLowerCase()}
             </p>
           </div>
+
+          {restaurantsLoading && (
+            <div className="space-y-3">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-2xl border border-gray-100 animate-pulse">
+                  <div className="w-16 h-16 bg-gray-100 rounded-xl shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-gray-100 rounded w-2/3" />
+                    <div className="h-2 bg-gray-100 rounded w-1/2" />
+                    <div className="h-2 bg-gray-100 rounded w-3/4" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!restaurantsLoading && restaurantsError && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+              <p className="text-xs font-bold text-red-700">Couldn&apos;t load restaurants</p>
+              <p className="text-[11px] text-red-500 mt-1">{restaurantsError}</p>
+            </div>
+          )}
+
+          {!restaurantsLoading && !restaurantsError && restaurants.length === 0 && (
+            <div className="bg-gray-50 rounded-2xl p-4 text-center text-xs text-swiggy-gray">
+              No restaurants found nearby.
+            </div>
+          )}
 
           <div className="space-y-3">
             {restaurants.map((r) => {
@@ -406,7 +477,42 @@ export default function PickupPage() {
 
           {/* Menu items */}
           <div className="px-4 mt-4">
-            <h3 className="text-sm font-bold text-swiggy-dark mb-3">Quick Pick Menu</h3>
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <h3 className="text-sm font-bold text-swiggy-dark">Quick Pick Menu</h3>
+              <span
+                className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                  mcpSource === "live"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-swiggy-gray"
+                }`}
+              >
+                {mcpSource === "live" ? "🟢 Live · Swiggy MCP" : "⚪ Demo data"}
+              </span>
+            </div>
+
+            {menuLoading && selectedRestaurant.menu.length === 0 && (
+              <div className="space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 animate-pulse">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-gray-100 rounded" />
+                      <div className="space-y-2">
+                        <div className="h-3 w-32 bg-gray-100 rounded" />
+                        <div className="h-2 w-16 bg-gray-100 rounded" />
+                      </div>
+                    </div>
+                    <div className="h-6 w-12 bg-gray-100 rounded" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!menuLoading && selectedRestaurant.menu.length === 0 && (
+              <div className="bg-gray-50 rounded-xl p-4 text-center text-xs text-swiggy-gray">
+                Couldn&apos;t load menu for this restaurant.
+              </div>
+            )}
+
             <div className="space-y-3">
               {selectedRestaurant.menu.map((item) => {
                 const inCart = cart.find((c) => c.name === item.name);

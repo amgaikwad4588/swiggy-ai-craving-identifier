@@ -670,6 +670,7 @@ export default function FoodAdvisorPage() {
   const [recommendations, setRecommendations] = useState<FoodRecommendation[]>([]);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [analyzeStep, setAnalyzeStep] = useState(0);
+  const [mcpSource, setMcpSource] = useState<"live" | "mock">("mock");
 
   const isRound2 = phase === "round2";
   const questions = isRound2 ? round2Questions : round1Questions;
@@ -697,23 +698,48 @@ export default function FoodAdvisorPage() {
     }, 400);
   };
 
-  const runAnalysis = (finalAnswers: Record<string, string>) => {
+  const runAnalysis = async (finalAnswers: Record<string, string>) => {
     setPhase("analyzing");
     setAnalyzeStep(0);
 
-    // Staggered analysis animation
     const steps = [0, 1, 2, 3, 4];
     steps.forEach((step, i) => {
       setTimeout(() => setAnalyzeStep(step + 1), i * 600);
     });
 
-    setTimeout(() => {
-      const craving = analyzeCraving(finalAnswers);
-      setCravingProfile(craving);
-      const recs = getRecommendations(finalAnswers, craving);
-      setRecommendations(recs);
-      setPhase("craving_reveal");
-    }, 3500);
+    const craving = analyzeCraving(finalAnswers);
+
+    const fetchRecs = (async (): Promise<{ recs: FoodRecommendation[]; source: "live" | "mock" }> => {
+      try {
+        const res = await fetch("/api/food-advisor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            craving: craving.category,
+            diet: finalAnswers.diet,
+            ingredient: finalAnswers.ingredient_pull,
+            budgetTier: finalAnswers.budget,
+            spice: finalAnswers.spice,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as { recommendations: FoodRecommendation[]; source: "live" | "mock" };
+        if (!json.recommendations || json.recommendations.length === 0) {
+          throw new Error("empty");
+        }
+        return { recs: json.recommendations, source: json.source };
+      } catch {
+        return { recs: getRecommendations(finalAnswers, craving), source: "mock" };
+      }
+    })();
+
+    const animationDone = new Promise<void>((r) => setTimeout(r, 3500));
+    const [{ recs, source }] = await Promise.all([fetchRecs, animationDone]);
+
+    setCravingProfile(craving);
+    setRecommendations(recs);
+    setMcpSource(source);
+    setPhase("craving_reveal");
   };
 
   const handleCheckpoint = (decided: boolean) => {
@@ -1048,9 +1074,20 @@ export default function FoodAdvisorPage() {
             <h3 className="text-base font-extrabold text-swiggy-dark mb-1">
               Perfect matches for you
             </h3>
-            <p className="text-[11px] text-swiggy-light-gray mb-4">
-              Based on your {cravingProfile.label.toLowerCase()} craving
-            </p>
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
+              <p className="text-[11px] text-swiggy-light-gray">
+                Based on your {cravingProfile.label.toLowerCase()} craving
+              </p>
+              <span
+                className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                  mcpSource === "live"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-swiggy-gray"
+                }`}
+              >
+                {mcpSource === "live" ? "🟢 Live · Swiggy MCP" : "⚪ Demo data"}
+              </span>
+            </div>
 
             <div className="space-y-4">
               {recommendations.map((rec, i) => (
