@@ -67,10 +67,68 @@ export interface McpEnvelope<T> {
   source: McpMode;
 }
 
+/**
+ * Error codes from /docs/reference/errors.md. Swiggy notes these are not
+ * emitted as `error.code` strings yet — currently classified by HTTP status
+ * + message prefix. We map both today, and the typed code stays accurate
+ * once Swiggy starts emitting them.
+ */
+export type SwiggyErrorCode =
+  | "UNAUTHENTICATED"        // 401, missing/invalid session — re-run OAuth
+  | "TOKEN_EXPIRED"          // 401, access token past expiry — re-run OAuth
+  | "SESSION_REVOKED"        // 419, session invalidated — re-run OAuth
+  | "INSUFFICIENT_SCOPE"     // 403, broader OAuth scope needed
+  | "RATE_LIMITED"           // 429, exponential backoff (max 5 retries)
+  | "VALIDATION_ERROR"       // 400, bad input — fix args, do not retry
+  | "NOT_FOUND"              // 404, resource missing — terminal
+  | "UPSTREAM_TIMEOUT"       // 504, retry with backoff
+  | "UPSTREAM_ERROR"         // 502, retry with backoff
+  | "INTERNAL_ERROR"         // 500, backoff once then escalate
+  | "UNKNOWN";
+
 class SwiggyMcpError extends Error {
-  constructor(message: string, public readonly mcpCode?: string) {
+  constructor(
+    message: string,
+    public readonly code: SwiggyErrorCode = "UNKNOWN",
+    public readonly httpStatus?: number,
+  ) {
     super(message);
     this.name = "SwiggyMcpError";
+  }
+
+  /** Whether the caller can retry with backoff. */
+  get retryable(): boolean {
+    return (
+      this.code === "RATE_LIMITED" ||
+      this.code === "UPSTREAM_TIMEOUT" ||
+      this.code === "UPSTREAM_ERROR" ||
+      this.code === "INTERNAL_ERROR"
+    );
+  }
+
+  /** Whether the user needs to re-authenticate. */
+  get needsReauth(): boolean {
+    return (
+      this.code === "UNAUTHENTICATED" ||
+      this.code === "TOKEN_EXPIRED" ||
+      this.code === "SESSION_REVOKED"
+    );
+  }
+}
+
+function classifyError(httpStatus: number, message: string): SwiggyErrorCode {
+  const m = message.toLowerCase();
+  switch (httpStatus) {
+    case 400: return "VALIDATION_ERROR";
+    case 401: return m.includes("expired") ? "TOKEN_EXPIRED" : "UNAUTHENTICATED";
+    case 403: return "INSUFFICIENT_SCOPE";
+    case 404: return "NOT_FOUND";
+    case 419: return "SESSION_REVOKED";
+    case 429: return "RATE_LIMITED";
+    case 500: return "INTERNAL_ERROR";
+    case 502: return "UPSTREAM_ERROR";
+    case 504: return "UPSTREAM_TIMEOUT";
+    default: return "UNKNOWN";
   }
 }
 
@@ -115,10 +173,8 @@ async function callTool<T>(
   });
 
   if (!res.ok) {
-    throw new SwiggyMcpError(
-      `Swiggy MCP ${server}/${toolName} returned ${res.status}`,
-      String(res.status),
-    );
+    const message = `Swiggy MCP ${server}/${toolName} returned ${res.status}`;
+    throw new SwiggyMcpError(message, classifyError(res.status, message), res.status);
   }
 
   const json = (await res.json()) as {
@@ -127,17 +183,24 @@ async function callTool<T>(
   };
 
   if (json.error) {
-    throw new SwiggyMcpError(json.error.message, String(json.error.code));
+    throw new SwiggyMcpError(
+      json.error.message,
+      classifyError(json.error.code, json.error.message),
+      json.error.code,
+    );
   }
 
   const textBlock = json.result?.content?.find((c) => c.type === "text")?.text;
   if (!textBlock) {
-    throw new SwiggyMcpError(`Empty result from ${toolName}`);
+    throw new SwiggyMcpError(`Empty result from ${toolName}`, "INTERNAL_ERROR");
   }
 
   const inner = JSON.parse(textBlock) as { success: boolean; data: T; message?: string };
   if (!inner.success) {
-    throw new SwiggyMcpError(inner.message || `${toolName} returned success=false`);
+    throw new SwiggyMcpError(
+      inner.message || `${toolName} returned success=false`,
+      "INTERNAL_ERROR",
+    );
   }
   return inner.data;
 }
@@ -238,11 +301,14 @@ export function getMode(): McpMode {
 //  Live → typed normalization
 // ────────────────────────────────────────────────────────────────────
 //
-// The MCP docs publish field types but not full response schemas (they cite
-// `availabilityStatus`, `distanceKm`, `nextOffset`, `variantsV2`, etc.). The
-// normalizers below defensively extract the fields we need and synthesize
-// emoji/bgColor for UI affordance — when the real response shape is locked
-// down post-onboarding, the extraction logic is the only thing to revisit.
+// /docs/reference/food/{search_restaurants,search_menu}.md publish request
+// parameters but only partial response schemas (Swiggy calls out individual
+// fields — `availabilityStatus`, `distanceKm`, `variations`, `variantsV2`,
+// `hasAddons`, `nextOffset` — without listing the full object shape). The
+// normalizers below defensively try the field names that documentation does
+// expose, plus their plausible aliases, and synthesize emoji/bgColor for the
+// UI. Once a real bearer token is available, log one live response and
+// trim the alias chains down to verified field names.
 
 interface RawObj {
   [key: string]: unknown;
